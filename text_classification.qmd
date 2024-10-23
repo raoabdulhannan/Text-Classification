@@ -1,0 +1,325 @@
+---
+title: "Assessment of Text Classification Model"
+author: "Rao Abdul Hannan, Yahan Yang"
+date: last-modified
+format:
+  pdf:
+    number-sections: true
+    indent: true
+    toc: false
+    include-in-header:
+      text: |
+        \addtokomafont{disposition}{\rmfamily}
+    geometry: "letterpaper, top=0.5in, bottom=0.5in, left=0.5in, right=0.5in"
+execute:
+  echo: false
+---
+
+# Statement of the Problem
+
+The AI research team has developed a random forest model to classify human-generated and AI-generated texts. The model performed quite well on the training data however, the performance decreased drastically on the test dataset. This paper investigates the question; what might be causing this difference and what might the team try as next steps?
+
+# Summary of Findings
+
+First, we filtered the training dataset for human-generated and only GPT-4o generated text from the AI-models because it aligned well with our test dataset. We tokenized both the datasets i.e. splitting them into single words and compared the statistics, appended in Table 1. The training dataset contains $\approx 120,000$ tokens each for both human and GPT-4o generated texts, which for text analysis is almost negligible. Secondly, we evaluated the top 20 words in both the training and test datasets and while mostly similar, there were some differences as highlighted in Figure 1. Subsequently, we studied the Parts of Speech usage in the two datasets and found that verbs, pronouns and auxiliary verbs were more common in the training dataset but not in the test, suggesting major variations as emphasized in Figure 2. Moving forward, we assessed the keyness scores to understand the differences between human and AI-generated texts within both texts, shown in Figure 3. We found high keyness scores for punctuation such as $(\$\quad \{\quad \}\; =)$ in the human-generated texts for test dataset. Upon further investigation, we discovered that very specific prompts were given in order to generate the texts in test dataset including the instructions, "formal academic and scientific writing voice. Use the first plural person form. Use active voice". This led to an increased usage of punctuation by the human authors since they are commonly used in academic writing. However the training dataset contains texts of academic, blog, fiction, news, spoken and technical & vocational material categories, and therefore did not have high keyness scores for punctuation. This finding motivated us to shift our analysis towards the Biber features, which the model actually uses to classify text. We performed principal component analysis (PCA) to determine how much variability in the data was explained by the Biber features. The resulting plot is appended as Figure 4 and clearly shows that the Biber features explain the variance in the training dataset quite well as evident by the spread of the Training Human and Training AI points. Meanwhile, the Test Human and Test AI points are clustered together which implies that **$1)$** all the test data set texts are of the same nature i.e. academic and **$2)$** the Biber features fail to explain the differences between the human and AI-generated texts in the test dataset. Since the AI research team's model is using these features to classify text, it is not performing well on the test dataset, as a result of being over-fitted on how the Biber features explain differences between the two text types within the training dataset.
+
+# Recommendations
+
+Moving forward, we recommend that the AI research team take the following measures to improve the performance of the model:
+
+-   Increase the size of the training data set in an effort to include millions of tokens to train the model better
+-   Implement cross validation to avoid over-fitting of the model on the training data set
+
+\newpage
+
+\bigskip
+# Appendix
+
+```{r}
+suppressMessages({
+  library(tidyverse)
+  library(quanteda)
+  library(quanteda.textstats)
+  library(caret)
+  library(factoextra)
+  library(corrplot)
+  library(wordcloud)
+  library(text)
+  library(scales)
+  library(quanteda.textplots)
+  library(patchwork)
+  library(gt)
+})
+```
+
+```{r}
+suppressMessages({
+  suppressWarnings({
+train_text_files_list <- list.files("/Users/raoabdulhannan/Documents/CMU/1st_Semester_Fall_24/Academics/36668_Text_Analysis/midterm/midterm_data/hape_sample/text_data", full.names = T, pattern = "*.tsv")
+train_text <- lapply(train_text_files_list, read_tsv) |> 
+  data.table::rbindlist()
+
+train_spacy_files_list <- list.files("/Users/raoabdulhannan/Documents/CMU/1st_Semester_Fall_24/Academics/36668_Text_Analysis/midterm/midterm_data/hape_sample/spacy_data", full.names = T, pattern = "*.tsv")
+train_spacy <- lapply(train_spacy_files_list, read_tsv) |> 
+  data.table::rbindlist()
+
+train_biber_files_list <- list.files("/Users/raoabdulhannan/Documents/CMU/1st_Semester_Fall_24/Academics/36668_Text_Analysis/midterm/midterm_data/hape_sample/biber_data", full.names = T, pattern = "*.tsv")
+train_biber <- lapply(train_biber_files_list, read_tsv) |> 
+  data.table::rbindlist()
+ })
+})
+```
+
+```{r}
+suppressMessages({
+  suppressWarnings({
+test_text <- read_tsv("/Users/raoabdulhannan/Documents/CMU/1st_Semester_Fall_24/Academics/36668_Text_Analysis/midterm/midterm_data/arxiv_sample/arxiv_text.tsv")
+test_spacy <- read_tsv("/Users/raoabdulhannan/Documents/CMU/1st_Semester_Fall_24/Academics/36668_Text_Analysis/midterm/midterm_data/arxiv_sample/arxiv_spacy.tsv")
+test_biber <- read_tsv("/Users/raoabdulhannan/Documents/CMU/1st_Semester_Fall_24/Academics/36668_Text_Analysis/midterm/midterm_data/arxiv_sample/arxiv_biber.tsv")
+ })
+})
+```
+
+```{r}
+train_tokens <- train_spacy |>
+  filter(str_detect(doc_id, "chunk_2") | str_detect(doc_id, "gpt-4o-2024-08-06")) |>
+  group_by(author_id = case_when(str_detect(doc_id, "chunk_2") ~ "Human",
+                                 str_detect(doc_id, "gpt-4o-2024-08-06") ~ "AI")) |>
+  summarize(token_count = n(), .groups = "drop")
+
+test_tokens <- test_spacy |>
+  group_by(author_id = case_when(str_detect(doc_id, "human") ~ "Human",
+                                 str_detect(doc_id, "machine") ~ "AI")) |>
+  summarize(token_count = n(), .groups = "drop")
+
+combined_tokens <- bind_rows(mutate(train_tokens, dataset = "Training"),
+                             mutate(test_tokens, dataset = "Test"))
+
+combined_tokens |>
+  filter(!is.na(author_id)) |>
+  select(dataset, author_id, token_count) |>
+  gt() |>
+  tab_header(title = md("**Table 1**: Token Counts")) |>
+  cols_label(dataset = "Dataset",
+             author_id = "Author Type",
+             token_count = "Tokens") |>
+  fmt_number(columns = c(token_count),
+            decimals = 0) |>
+  tab_options(table.width = px(600),
+              heading.title.font.size = 16)
+```
+\bigskip
+
+
+
+```{r, fig.align='center'}
+preprocess_spacy <- function(data){
+  data |>
+    filter(pos != "PUNCT") |>
+    group_by(doc_id) |>
+    summarize(text = paste(token, collapse = " "))
+}
+
+train_processed <- preprocess_spacy(train_spacy)
+test_processed <- preprocess_spacy(test_spacy)
+
+corpus_train <- corpus(train_processed, text_field = "text")
+corpus_test <- corpus(test_processed, text_field = "text")
+
+dfm_train <- dfm(tokens(corpus_train))
+dfm_test <- dfm(tokens(corpus_test))
+
+calc_rel_freq <- function(dfm){
+  freq <- textstat_frequency(dfm)
+  total_words <- sum(freq$frequency)
+  freq |>
+    mutate(rel_freq = frequency / total_words)
+}
+
+word_freq_train <- calc_rel_freq(dfm_train) |>
+  mutate(dataset = "Train") |>
+  slice_max(rel_freq, n = 20)
+word_freq_test <- calc_rel_freq(dfm_test) |>
+  mutate(dataset = "Test") |>
+  slice_max(rel_freq, n = 20)
+
+combined_freq <- bind_rows(word_freq_train, word_freq_test)
+
+combined_freq |>
+  mutate(dataset = factor(dataset,
+                          levels = c("Train", "Test"))) |>
+  ggplot(aes(x = reorder(feature, rel_freq), y = rel_freq, fill = dataset)) +
+  geom_col() +
+  facet_wrap(~ dataset, scales = "free_y") +
+  coord_flip() +
+  scale_y_continuous(labels = scales::percent_format(scale = 100)) +
+  scale_fill_manual(values = c("Train" = "steelblue", "Test" = "tomato")) +
+  labs(title = expression(paste(bold("Figure 1: "), "Top 20 Words")),
+       x = "Word", y = "Frequency", fill = "Dataset") +
+  theme_light() +
+  theme(plot.title = element_text(size = 12, hjust = 0.5))
+```
+\bigskip
+
+
+```{r, fig.align='center'}
+train_pos_distribution <- train_spacy |>
+  filter(pos != "PUNCT") |>
+  count(pos) |>
+  mutate(prop = n / sum(n))
+
+train_pos_plot <- train_pos_distribution |>
+  ggplot(aes(x = reorder(pos, prop), y = prop)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Train Dataset",
+       x = "POS", y = "Proportion") +
+  theme_light() +
+  theme(plot.title = element_text(size = 10, hjust = 0.5))
+
+test_pos_distribution <- test_spacy |>
+  filter(pos != "PUNCT") |>
+  count(pos) |>
+  mutate(prop = n / sum(n))
+
+test_pos_plot <- test_pos_distribution |>
+  ggplot(aes(x = reorder(pos, prop), y = prop)) +
+  geom_col(fill = "tomato") +
+  coord_flip() +
+  labs(title = "Test Dataset",
+       x = "POS", y = "Proportion") +
+  theme_light() +
+  theme(plot.title = element_text(size = 10, hjust = 0.5))
+
+(train_pos_plot + test_pos_plot) +
+  patchwork::plot_annotation(title = expression(paste(bold("Figure 2: "), "Parts of Speech Distribution")),
+                             theme = theme(plot.title = element_text(size = 12, hjust = 0.5)))
+```
+\bigskip
+
+```{r, fig.align='center', fig.height=6, fig.width=10}
+suppressMessages({
+is_human_train <- function(doc_id){
+  grepl("chunk_2", doc_id)
+}
+
+is_human_test <- function(doc_id){
+  grepl("human", doc_id)
+}
+
+perform_keyness_analysis <- function(dfm, dataset_name, is_human_func){
+  human_dfm <- dfm_subset(dfm, is_human_func(docnames(dfm)))
+  ai_dfm <- dfm_subset(dfm, !is_human_func(docnames(dfm)))
+  keyness <- textstat_keyness(rbind(human_dfm, ai_dfm),
+                              target = c(rep(TRUE, ndoc(human_dfm)),
+                                         rep(FALSE, ndoc(ai_dfm))))
+  
+  plot <- textplot_keyness(keyness, color = c("steelblue", "tomato"), n = 20,
+                 labelsize = 3, labelcolor = "gray30") +
+    ggtitle(paste(dataset_name, "Dataset")) +
+    theme(plot.title = element_text(size = 10, hjust = 0.5)) +
+    scale_color_manual(values = c("steelblue", "tomato"),
+                       labels = c("Human", "AI"),
+                       name = NULL) +
+    xlab("Keyness Score")
+  
+  return(plot)
+  
+}
+
+train_keyness_plot <- perform_keyness_analysis(dfm_train, "Train", is_human_train) 
+test_keyness_plot <- perform_keyness_analysis(dfm_test, "Test", is_human_test)
+
+(train_keyness_plot + test_keyness_plot) +
+  patchwork::plot_annotation(title = expression(paste(bold("Figure 3: "), "Keyness Analysis")),
+                             theme = theme(plot.title = element_text(size = 16, hjust = 0.5)))
+})
+```
+\bigskip
+
+```{r}
+train_text_filtered <- train_text |>
+  filter(model_id %in% c("chunk_2" ,"gpt-4o-2024-08-06"))
+train_biber_filtered <- train_biber |>
+  filter(doc_id %in% train_text_filtered$doc_id)
+```
+
+```{r}
+biber_features <- names(train_biber)[-1]
+X_train <- train_biber_filtered |>
+  select(all_of(biber_features))
+X_test <- test_biber |>
+  select(all_of(biber_features))
+```
+
+```{r}
+pca_result <- prcomp(X_train, scale. = TRUE)
+test_pca <- predict(pca_result, newdata = X_test)
+```
+
+```{r}
+explained_variance_ratio <- pca_result$dev^2 / sum(pca_result$dev^2)
+```
+
+```{r}
+feature_importance <- abs(pca_result$rotation[, 1])
+top_features <- names(sort(feature_importance, decreasing = TRUE))[1:10]
+```
+
+```{r}
+t_test_results <- map(top_features, function(feature) {
+  human_train <- X_train |>
+    filter(train_text_filtered$model_id == "chunk_2") |>
+    pull(feature)
+  ai_train <- X_train |>
+    filter(train_text_filtered$model_id == "gpt-4o-2024-08-06") |>
+    pull(feature)
+  human_test <- X_test |>
+    slice(seq(1, nrow(X_test), by = 2))|>
+    pull(feature)
+  ai_test <- X_test |>
+    slice(seq(2, nrow(X_test), by = 2)) |>
+    pull(feature)
+  
+  train_test <- t.test(human_train, ai_train)
+  test_test <- t.test(human_test, ai_test)
+  
+  list(train = list(t_stat = train_test$statistic, p_value = train_test$p.value),
+       test = list(t_stat = test_test$statistic, p_value = test_test$p.value))
+  
+}) |>
+  setNames(top_features)
+```
+
+```{r, fig.align='center'}
+pca_data <- bind_rows(
+  tibble(
+    PC1 = pca_result$x[, 1],
+    PC2 = pca_result$x[, 2],
+    Type = case_when(
+      train_text_filtered$model_id == "chunk_2" ~ "Training Human",
+      train_text_filtered$model_id == "gpt-4o-2024-08-06" ~ "Training AI")
+  ),
+  tibble(
+    PC1 = test_pca[, 1],
+    PC2 = test_pca[, 2],
+    Type = ifelse(seq_along(test_pca[, 1]) %% 2 == 1, "Test Human", "Test AI")
+  )
+)
+
+pca_data |>
+  ggplot(aes(x = PC1, y = PC2, color = Type)) +
+  geom_point(alpha = 0.5) +
+  scale_color_manual(values = c("Test AI" = "orchid", "Test Human" = "steelblue",
+                               "Training AI" = "tomato", "Training Human" = "limegreen")) +
+  labs(title = expression(paste(bold("Figure 4: "), "PCA of Biber Features: Training vs Test Data")),
+       x = "Principal Component 1",
+       y = "Principal Component 2") +
+  theme_light() +
+  theme(plot.title = element_text(size = 12, hjust = 0.5),
+        axis.title = element_text(size = 10, hjust = 0.5))
+```
+
+
+
+
