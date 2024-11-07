@@ -3,13 +3,10 @@ title: "Assessment of Text Classification Model"
 author: "Rao Abdul Hannan, Yahan Yang"
 date: last-modified
 format:
-  pdf:
+  html:
     number-sections: true
     indent: true
     toc: false
-    include-in-header:
-      text: |
-        \addtokomafont{disposition}{\rmfamily}
     geometry: "letterpaper, top=0.5in, bottom=0.5in, left=0.5in, right=0.5in"
 execute:
   echo: false
@@ -106,7 +103,8 @@ combined_tokens |>
   fmt_number(columns = c(token_count),
             decimals = 0) |>
   tab_options(table.width = px(600),
-              heading.title.font.size = 16)
+              heading.title.font.size = 16,
+              column_labels.background.color = "steelblue")
 ```
 \bigskip
 
